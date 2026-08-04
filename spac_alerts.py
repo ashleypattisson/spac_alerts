@@ -212,12 +212,21 @@ def strip_html(html):
 
 
 def fetch_filing_text(index_url, limit=DOC_CHARS):
-    """Pull the primary document's text from a filing index page."""
+    """Pull the primary document's text plus both parties' SIC codes.
+
+    SIC 6770 = 'blank checks'. Every genuine SPAC carries it, so its
+    presence (or absence) is a strong, free signal we hand to the classifier.
+    Returns (text, sic_codes).
+    """
     try:
         index_html = sec_get(index_url)
     except Exception as exc:
         print(f"    ! could not fetch index: {exc}")
-        return ""
+        return "", []
+
+    sics = re.findall(r"SIC[:=]?\s*</?[^>]*>?\s*(\d{4})", index_html)
+    sics += re.findall(r"SIC=(\d{4})", index_html)
+    sics = sorted(set(sics))
 
     hrefs = re.findall(r'href="(/Archives/edgar/data/[^"]+)"', index_html)
     doc = None
@@ -229,15 +238,15 @@ def fetch_filing_text(index_url, limit=DOC_CHARS):
             doc = h
             break
     if not doc:
-        return ""
+        return "", sics
 
     try:
         raw = sec_get("https://www.sec.gov" + doc)
     except Exception as exc:
         print(f"    ! could not fetch document: {exc}")
-        return ""
+        return "", sics
 
-    return strip_html(raw)[:limit]
+    return strip_html(raw)[:limit], sics
 
 
 # ============================================================================
@@ -264,6 +273,14 @@ however large the deal. Signals of a real SPAC: a trust account, redemption \
 rights, a shell with no operations, "blank check" language, a deadline to \
 complete a combination, units/warrants from a recent IPO.
 
+WATCH FOR REVERSE MERGERS: a small listed OPERATING company (a builder, a
+miner, a retailer) merging with a private firm to take it public is NOT a SPAC,
+even though the filing language is nearly identical. The test is whether one
+party is an empty shell that raised cash for the sole purpose of buying a
+business. If a party has real revenue, employees or operations, it is not a SPAC.
+
+SIC CODE EVIDENCE: {sic_hint}
+
 Use "Unknown" for sector if no target is identifiable. Set is_deal to false for \
 routine filings (extensions, trust redemptions, IPO closings, auditor changes) \
 that do not concern a specific merger target.
@@ -272,7 +289,19 @@ FILING TEXT:
 {text}"""
 
 
-def classify(text):
+def sic_hint(sics):
+    if not sics:
+        return "No SIC codes could be read - judge on the text alone."
+    if "6770" in sics:
+        return ("One party is coded 6770 (blank checks) - STRONG evidence this "
+                "is a genuine SPAC.")
+    return (f"Parties are coded {', '.join(sics)}. None is 6770 (blank checks), "
+            "which every SPAC carries. Treat as NOT a SPAC unless the text "
+            "explicitly describes a trust account and shareholder redemption "
+            "rights.")
+
+
+def classify(text, sics=None):
     """Ask Claude for the target's sector. Returns a dict."""
     fallback = {"is_spac": True, "is_deal": True, "target": None,
                 "sector": "Unknown", "summary": "", "degraded": True}
@@ -280,7 +309,9 @@ def classify(text):
         return fallback
 
     prompt = CLASSIFY_PROMPT.format(
-        sectors=", ".join(ALLOWED_SECTORS), text=text
+        sectors=", ".join(ALLOWED_SECTORS),
+        sic_hint=sic_hint(sics or []),
+        text=text,
     )
     try:
         r = requests.post(
@@ -388,8 +419,8 @@ def run(alert_on_first_run=False, dry_run=False):
                 continue
 
             print(f"  → {form_type}: {e['company']}")
-            text = fetch_filing_text(e["link"])
-            info = classify(text)
+            text, sics = fetch_filing_text(e["link"])
+            info = classify(text, sics)
 
             if not info["is_spac"]:
                 skipped_notspac += 1
