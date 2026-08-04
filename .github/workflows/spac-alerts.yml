@@ -2,15 +2,11 @@ name: SPAC Alerts
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
-  workflow_dispatch: {}
-
-concurrency:
-  group: spac-alerts
-  cancel-in-progress: false
+    - cron: "*/10 * * * *"   # every 10 minutes
+  workflow_dispatch:          # lets you run it manually from the Actions tab
 
 permissions:
-  contents: write
+  contents: write             # needed to commit seen_filings.json back
 
 jobs:
   poll:
@@ -22,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: pip install requests
@@ -32,16 +28,14 @@ jobs:
           PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
           PUSHOVER_USER: ${{ secrets.PUSHOVER_USER }}
           SEC_EMAIL: ${{ secrets.SEC_EMAIL }}
-        run: python spac_alerts.py
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python spac_alerts.py --once
 
-      - name: Save updated state back to repo
+      - name: Save state back to repo
         run: |
-          git config user.name "spac-alerts-bot"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "spac-bot"
+          git config user.email "spac-bot@users.noreply.github.com"
           git add seen_filings.json
-          if git diff --staged --quiet; then
-            echo "No state change to commit."
-          else
-            git commit -m "Update seen filings [skip ci]"
-            git push
-          fi
+          git diff --staged --quiet || git commit -m "Update seen filings"
+          git pull --rebase --autostash || true
+          git push
