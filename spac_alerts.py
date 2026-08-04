@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """
-SPAC Deal Alert Monitor — GitHub Actions / cloud version
---------------------------------------------------------
-Polls SEC EDGAR for new Form 425 filings (business combination
-communications) and SPAC-related 8-Ks, dedupes by accession number,
-and pushes alerts via Pushover.
+SPAC Deal Alert Monitor - v2 (sector-aware)
+-------------------------------------------
+Polls SEC EDGAR for new Form 425 and SPAC-flagged 8-K filings, then:
 
-All configuration comes from environment variables (set as GitHub
-Secrets) so no credentials ever live in this file:
-    PUSHOVER_TOKEN   - your Pushover application/API token
-    PUSHOVER_USER    - your Pushover user key
-    SEC_EMAIL        - your email (SEC requires a contact in the User-Agent)
+  1. Skips any SPAC it has already alerted on in the last COOLDOWN_DAYS
+     (kills the follow-up roadshow/promo flood - one alert per deal).
+  2. Downloads the filing text into memory (nothing written to disk) and
+     asks Claude to identify the target's INDUSTRY SECTOR.
+  3. Only pushes the alert if that sector is on your watchlist.
 
-State (which filings have been seen) is stored in seen_filings.json,
-which the GitHub Actions workflow commits back to the repo after each
-run so the memory persists between runs.
+Environment variables (set as GitHub Secrets):
+    PUSHOVER_TOKEN     - Pushover application/API token
+    PUSHOVER_USER      - Pushover user key
+    SEC_EMAIL          - your email (SEC requires a contact in User-Agent)
+    ANTHROPIC_API_KEY  - key from console.anthropic.com
+
+State lives in seen_filings.json, committed back by the workflow.
 """
 
 import argparse
@@ -25,22 +27,52 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
 
 import requests
 
-# --- Config from environment ------------------------------------------------
+# ============================================================================
+# YOUR SETTINGS - edit these two things and nothing else
+# ============================================================================
+
+# Only alert on these sectors. Leave the list EMPTY to get every sector.
+# Must match one of the ALLOWED_SECTORS names further down.
+SECTOR_WATCHLIST = [
+    # "Aerospace & Defense",
+    # "Semiconductors",
+    # "Energy & Power",
+]
+
+# Don't alert on the same SPAC twice within this many days.
+COOLDOWN_DAYS = 30
+
+# ============================================================================
+# Config
+# ============================================================================
+
 PUSHOVER_TOKEN = os.environ.get("PUSHOVER_TOKEN", "")
 PUSHOVER_USER = os.environ.get("PUSHOVER_USER", "")
 SEC_EMAIL = os.environ.get("SEC_EMAIL", "anonymous@example.com")
-SEC_USER_AGENT = f"SPACAlertMonitor/1.0 ({SEC_EMAIL})"
+SEC_USER_AGENT = f"SPACAlertMonitor/2.0 ({SEC_EMAIL})"
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
 STATE_FILE = Path(__file__).parent / "seen_filings.json"
 MAX_SEEN = 5000
 
+# How much of the filing to send for classification (characters).
+DOC_CHARS = 6000
+
+ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
+
 EDGAR_FEEDS = {
-    "425": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=425&company=&dateb=&owner=include&count=100&output=atom",
-    "8-K": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=100&output=atom",
+    "425": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=425"
+           "&company=&dateb=&owner=include&count=100&output=atom",
+    "8-K": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K"
+           "&company=&dateb=&owner=include&count=100&output=atom",
 }
 
 DEAL_KEYWORDS = [
@@ -48,166 +80,357 @@ DEAL_KEYWORDS = [
     r"acquisition corp", r"acquisition co", r"spac",
 ]
 KEYWORD_RE = re.compile("|".join(DEAL_KEYWORDS), re.IGNORECASE)
+
 SPAC_NAME_RE = re.compile(
-    r"acquisition\s+(corp|co|company|holdings?)|capital\s+corp|blank\s+check",
+    r"(acquisition\s+(corp|co|company|holdings?|partners)"
+    r"|capital\s+corp"
+    r"|\bSPAC\b"
+    r"|blank\s+check)",
     re.IGNORECASE,
 )
-ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
+
+ALLOWED_SECTORS = [
+    "Aerospace & Defense", "Semiconductors", "Software & Internet",
+    "Fintech & Financial Services", "Healthcare & Biotech", "Energy & Power",
+    "Mining & Materials", "Industrials & Manufacturing", "Consumer & Retail",
+    "Media & Entertainment", "Transport & Logistics", "Real Estate",
+    "Crypto & Digital Assets", "Agriculture & Food", "Telecoms",
+    "Other", "Unknown",
+]
+
+# ============================================================================
+# State
+# ============================================================================
 
 
-def log(msg: str) -> None:
-    print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}Z] {msg}", flush=True)
+def load_state():
+    if not STATE_FILE.exists():
+        return {"seen": [], "cik_alerts": {}}
+    try:
+        data = json.loads(STATE_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {"seen": [], "cik_alerts": {}}
+    # Tolerate the v1 format (a bare list of accession numbers)
+    if isinstance(data, list):
+        return {"seen": data, "cik_alerts": {}}
+    data.setdefault("seen", [])
+    data.setdefault("cik_alerts", {})
+    return data
 
 
-def load_seen() -> dict:
-    if STATE_FILE.exists():
-        try:
-            return json.loads(STATE_FILE.read_text())
-        except (json.JSONDecodeError, OSError):
-            log("WARNING: state file unreadable, starting fresh")
-    return {"seen": [], "first_run_done": False}
-
-
-def save_seen(state: dict) -> None:
+def save_state(state):
     state["seen"] = state["seen"][-MAX_SEEN:]
-    tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state))
-    tmp.replace(STATE_FILE)
+    cutoff = time.time() - (COOLDOWN_DAYS * 86400)
+    state["cik_alerts"] = {
+        k: v for k, v in state["cik_alerts"].items() if v > cutoff
+    }
+    STATE_FILE.write_text(json.dumps(state, indent=1))
 
 
-def accession_from_entry(entry_id: str, link: str) -> str:
-    m = re.search(r"(\d{10}-\d{2}-\d{6})", entry_id) or re.search(r"(\d{10}-\d{2}-\d{6})", link)
-    return m.group(1) if m else entry_id
+def in_cooldown(state, cik):
+    last = state["cik_alerts"].get(cik)
+    if last is None:
+        return False
+    return (time.time() - last) < (COOLDOWN_DAYS * 86400)
 
 
-def fetch_feed(url: str, session: requests.Session, retries: int = 3) -> list:
-    resp = None
-    for attempt in range(1, retries + 1):
-        resp = session.get(url, timeout=30)
-        if resp.status_code == 200:
-            break
-        # SEC occasionally throttles cloud IPs with 403/429; back off and retry
-        wait = attempt * 5
-        log(f"HTTP {resp.status_code} on {url.split('type=')[-1][:4]} feed, "
-            f"retry {attempt}/{retries} in {wait}s")
-        time.sleep(wait)
-    resp.raise_for_status()
-    root = ET.fromstring(resp.content)
-    entries = []
+# ============================================================================
+# EDGAR
+# ============================================================================
+
+
+def sec_get(url, timeout=30):
+    r = requests.get(
+        url,
+        headers={"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    time.sleep(0.15)  # stay well inside SEC's 10 requests/second limit
+    return r.text
+
+
+def accession_from_entry(entry_id, link):
+    m = re.search(r"accession-number=(\S+)", entry_id or "")
+    if m:
+        return m.group(1)
+    m = re.search(r"(\d{10}-\d{2}-\d{6})", link or "")
+    return m.group(1) if m else (entry_id or link)
+
+
+def cik_from_link(link):
+    m = re.search(r"/data/(\d+)/", link or "")
+    return m.group(1) if m else None
+
+
+def clean_title(title):
+    t = re.sub(r"^\S+\s+-\s+", "", title or "")
+    t = re.sub(r"\s*\(\d{10}\)\s*", " ", t)
+    t = re.sub(r"\s*\((Filer|Subject|Issuer|Reporting)\)\s*", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def parse_feed(xml_text):
+    root = ET.fromstring(xml_text)
+    out = []
     for e in root.findall("a:entry", ATOM_NS):
         title = (e.findtext("a:title", default="", namespaces=ATOM_NS) or "").strip()
         entry_id = (e.findtext("a:id", default="", namespaces=ATOM_NS) or "").strip()
-        updated = (e.findtext("a:updated", default="", namespaces=ATOM_NS) or "").strip()
         link_el = e.find("a:link", ATOM_NS)
         link = link_el.get("href", "") if link_el is not None else ""
-        entries.append({
-            "title": title, "id": entry_id, "link": link, "updated": updated,
+        out.append({
+            "title": title,
+            "link": link,
+            "company": clean_title(title),
             "accession": accession_from_entry(entry_id, link),
+            "cik": cik_from_link(link),
         })
-    return entries
+    return out
 
 
-def is_alert_worthy(form_type: str, entry: dict) -> bool:
+def is_candidate(form_type, entry):
+    """425s always qualify. 8-Ks must look SPAC-related."""
     if form_type == "425":
         return True
     title = entry["title"]
-    return bool(KEYWORD_RE.search(title) or SPAC_NAME_RE.search(title))
+    return bool(SPAC_NAME_RE.search(title) or KEYWORD_RE.search(title))
 
 
-def send_pushover(title: str, message: str, url: str, url_title: str) -> bool:
+# ============================================================================
+# Document fetch (in memory only - nothing saved to disk)
+# ============================================================================
+
+TAG_RE = re.compile(r"<[^>]+>")
+SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
+
+
+def strip_html(html):
+    text = SCRIPT_RE.sub(" ", html)
+    text = TAG_RE.sub(" ", text)
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def fetch_filing_text(index_url, limit=DOC_CHARS):
+    """Pull the primary document's text from a filing index page."""
+    try:
+        index_html = sec_get(index_url)
+    except Exception as exc:
+        print(f"    ! could not fetch index: {exc}")
+        return ""
+
+    hrefs = re.findall(r'href="(/Archives/edgar/data/[^"]+)"', index_html)
+    doc = None
+    for h in hrefs:
+        low = h.lower()
+        if low.endswith("-index.htm") or low.endswith("-index.html"):
+            continue
+        if low.endswith((".htm", ".html", ".txt")):
+            doc = h
+            break
+    if not doc:
+        return ""
+
+    try:
+        raw = sec_get("https://www.sec.gov" + doc)
+    except Exception as exc:
+        print(f"    ! could not fetch document: {exc}")
+        return ""
+
+    return strip_html(raw)[:limit]
+
+
+# ============================================================================
+# Sector classification
+# ============================================================================
+
+CLASSIFY_PROMPT = """You are reading an SEC filing from a SPAC (blank-check company).
+
+Decide whether this filing announces or discusses a specific merger/business \
+combination with an identified target company, and if so, what industry the \
+TARGET operates in.
+
+Respond with ONLY a JSON object, no markdown, no preamble:
+{{"is_deal": true/false, "target": "target company name or null", \
+"sector": "one of the allowed sectors", "summary": "max 12 words on what the target does"}}
+
+Allowed sectors: {sectors}
+
+Use "Unknown" for sector if no target is identifiable. Set is_deal to false for \
+routine filings (extensions, trust redemptions, IPO closings, auditor changes) \
+that do not concern a specific merger target.
+
+FILING TEXT:
+{text}"""
+
+
+def classify(text):
+    """Ask Claude for the target's sector. Returns a dict."""
+    fallback = {"is_deal": True, "target": None, "sector": "Unknown",
+                "summary": "", "degraded": True}
+    if not ANTHROPIC_API_KEY or not text:
+        return fallback
+
+    prompt = CLASSIFY_PROMPT.format(
+        sectors=", ".join(ALLOWED_SECTORS), text=text
+    )
+    try:
+        r = requests.post(
+            ANTHROPIC_URL,
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": ANTHROPIC_MODEL,
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        body = "".join(
+            b.get("text", "") for b in r.json().get("content", [])
+            if b.get("type") == "text"
+        )
+        body = re.sub(r"^```(?:json)?|```$", "", body.strip(), flags=re.M).strip()
+        result = json.loads(body)
+        result.setdefault("is_deal", True)
+        result.setdefault("sector", "Unknown")
+        result.setdefault("target", None)
+        result.setdefault("summary", "")
+        result["degraded"] = False
+        return result
+    except Exception as exc:
+        print(f"    ! classification failed ({exc}) - alerting anyway")
+        return fallback
+
+
+def sector_wanted(sector, degraded):
+    if not SECTOR_WATCHLIST:
+        return True
+    if degraded or sector == "Unknown":
+        return True  # fail open: never silently lose a real deal
+    return sector in SECTOR_WATCHLIST
+
+
+# ============================================================================
+# Pushover
+# ============================================================================
+
+
+def push(title, message, url, url_title="Open filing on EDGAR"):
     if not PUSHOVER_TOKEN or not PUSHOVER_USER:
-        log("ERROR: Pushover credentials missing from environment")
-        log(f"ALERT (not sent): {title} | {message} | {url}")
+        print("    ! Pushover credentials missing - not sending")
         return False
     try:
         r = requests.post(
             "https://api.pushover.net/1/messages.json",
             data={
                 "token": PUSHOVER_TOKEN, "user": PUSHOVER_USER,
-                "title": title, "message": message,
-                "url": url, "url_title": url_title, "priority": 0,
+                "title": title[:250], "message": message[:1024],
+                "url": url, "url_title": url_title,
             },
-            timeout=15,
+            timeout=20,
         )
-        if r.status_code == 200:
-            return True
-        log(f"Pushover error {r.status_code}: {r.text[:200]}")
-        return False
-    except requests.RequestException as exc:
-        log(f"Pushover request failed: {exc}")
+        r.raise_for_status()
+        return True
+    except Exception as exc:
+        print(f"    ! Pushover error: {exc}")
         return False
 
 
-def clean_title(raw_title: str) -> str:
-    t = re.sub(r"^\S+\s+-\s+", "", raw_title)
-    t = re.sub(r"\s*\(\d{7,10}\)\s*", " ", t)
-    return t.strip()
+# ============================================================================
+# Main
+# ============================================================================
 
 
-def poll_once(state: dict, session: requests.Session, alerting: bool) -> int:
+def run(alert_on_first_run=False, dry_run=False):
+    state = load_state()
+    first_run = not state["seen"]
     seen = set(state["seen"])
-    new_alerts = 0
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+    sent = skipped_cik = skipped_sector = skipped_notdeal = 0
+
     for form_type, url in EDGAR_FEEDS.items():
         try:
-            entries = fetch_feed(url, session)
-        except (requests.RequestException, ET.ParseError) as exc:
-            log(f"Feed fetch failed for {form_type}: {exc}")
+            entries = parse_feed(sec_get(url))
+        except Exception as exc:
+            print(f"[{stamp}] {form_type}: feed error: {exc}")
             continue
-        log(f"{form_type}: {len(entries)} entries in feed")
-        for entry in entries:
-            key = f"{form_type}:{entry['accession']}"
-            if key in seen:
+        print(f"[{stamp}] {form_type}: {len(entries)} entries in feed")
+
+        for e in entries:
+            acc = e["accession"]
+            if acc in seen:
                 continue
-            seen.add(key)
-            state["seen"].append(key)
-            if not is_alert_worthy(form_type, entry):
+            seen.add(acc)
+            state["seen"].append(acc)
+
+            if first_run and not alert_on_first_run:
                 continue
-            if alerting:
-                company = clean_title(entry["title"])
-                if send_pushover(f"SPAC {form_type} Filing",
-                                 f"{company}\nFiled: {entry['updated']}",
-                                 entry["link"], "Open filing on EDGAR"):
-                    new_alerts += 1
-                    log(f"Alerted: {company}")
-                time.sleep(0.5)
-            else:
-                log(f"Seeded (no alert): {clean_title(entry['title'])}")
-    save_seen(state)
-    return new_alerts
+            if not is_candidate(form_type, e):
+                continue
+
+            cik = e["cik"] or e["company"]
+            if in_cooldown(state, cik):
+                skipped_cik += 1
+                continue
+
+            print(f"  → {form_type}: {e['company']}")
+            text = fetch_filing_text(e["link"])
+            info = classify(text)
+
+            if not info["is_deal"]:
+                skipped_notdeal += 1
+                print("    · not a deal filing - skipped")
+                continue
+            if not sector_wanted(info["sector"], info["degraded"]):
+                skipped_sector += 1
+                print(f"    · sector {info['sector']} not on watchlist - skipped")
+                continue
+
+            target = info.get("target") or "target not yet named"
+            title = f"{info['sector']} — {e['company']}"
+            body_lines = [f"Target: {target}"]
+            if info.get("summary"):
+                body_lines.append(info["summary"])
+            body_lines.append(f"Form {form_type} · {stamp}")
+            message = "\n".join(body_lines)
+
+            if dry_run:
+                print(f"    [dry run] {title} | {message}")
+            elif push(title, message, e["link"]):
+                sent += 1
+                state["cik_alerts"][cik] = time.time()
+
+    save_state(state)
+    if first_run and not alert_on_first_run:
+        print(f"[{stamp}] First run - seeded {len(state['seen'])} filings, no alerts.")
+    else:
+        print(f"[{stamp}] Done. {sent} sent | {skipped_cik} in cooldown | "
+              f"{skipped_sector} off-sector | {skipped_notdeal} not deals.")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="SPAC deal alert monitor (cloud)")
-    parser.add_argument("--test-push", action="store_true")
-    parser.add_argument("--alert-on-first-run", action="store_true")
-    args = parser.parse_args()
+def main():
+    p = argparse.ArgumentParser(description="SPAC deal alerts via EDGAR + Pushover")
+    p.add_argument("--once", action="store_true", help="run a single poll (default)")
+    p.add_argument("--alert-on-first-run", action="store_true",
+                   help="alert on the backlog instead of seeding silently")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print alerts instead of sending them")
+    p.add_argument("--test-push", action="store_true",
+                   help="send a test notification and exit")
+    args = p.parse_args()
 
     if args.test_push:
-        ok = send_pushover("SPAC Alerts — Test",
-                           "Cloud runner is wired up correctly.",
-                           "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent",
-                           "EDGAR latest filings")
+        ok = push("SPAC Alerts", "Test notification — setup is working.",
+                  "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=425")
+        print("Sent." if ok else "Failed.")
         sys.exit(0 if ok else 1)
 
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": SEC_USER_AGENT,
-        "Accept-Encoding": "gzip, deflate",
-        "Accept": "application/atom+xml,text/xml,*/*",
-        "Host": "www.sec.gov",
-    })
-
-    state = load_seen()
-    first_run = not state.get("first_run_done", False)
-    alerting = (not first_run) or args.alert_on_first_run
-    if first_run:
-        log("First run: seeding cache" + ("" if alerting else " (no alerts this pass)"))
-
-    n = poll_once(state, session, alerting)
-    if first_run:
-        state["first_run_done"] = True
-        save_seen(state)
-    log(f"Done, {n} alert(s) sent.")
+    run(alert_on_first_run=args.alert_on_first_run, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
