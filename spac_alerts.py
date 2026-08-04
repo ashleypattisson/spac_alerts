@@ -246,15 +246,23 @@ def fetch_filing_text(index_url, limit=DOC_CHARS):
 
 CLASSIFY_PROMPT = """You are reading an SEC filing from a SPAC (blank-check company).
 
-Decide whether this filing announces or discusses a specific merger/business \
-combination with an identified target company, and if so, what industry the \
-TARGET operates in.
+Answer three things: (1) does this involve a SPAC / blank-check company, \
+(2) does it announce or discuss a business combination with an identified \
+target, and (3) what industry does the TARGET operate in.
 
 Respond with ONLY a JSON object, no markdown, no preamble:
-{{"is_deal": true/false, "target": "target company name or null", \
+{{"is_spac": true/false, "is_deal": true/false, "target": "target company name or null", \
 "sector": "one of the allowed sectors", "summary": "max 12 words on what the target does"}}
 
 Allowed sectors: {sectors}
+
+CRITICAL - is_spac: Form 425 is filed by ANY company in a stock-based merger, \
+not just SPACs. Set is_spac to true ONLY if one party is a special purpose \
+acquisition company / blank-check shell taking a private company public. \
+Ordinary corporate M&A between two operating businesses is is_spac FALSE, \
+however large the deal. Signals of a real SPAC: a trust account, redemption \
+rights, a shell with no operations, "blank check" language, a deadline to \
+complete a combination, units/warrants from a recent IPO.
 
 Use "Unknown" for sector if no target is identifiable. Set is_deal to false for \
 routine filings (extensions, trust redemptions, IPO closings, auditor changes) \
@@ -266,8 +274,8 @@ FILING TEXT:
 
 def classify(text):
     """Ask Claude for the target's sector. Returns a dict."""
-    fallback = {"is_deal": True, "target": None, "sector": "Unknown",
-                "summary": "", "degraded": True}
+    fallback = {"is_spac": True, "is_deal": True, "target": None,
+                "sector": "Unknown", "summary": "", "degraded": True}
     if not ANTHROPIC_API_KEY or not text:
         return fallback
 
@@ -296,6 +304,7 @@ def classify(text):
         )
         body = re.sub(r"^```(?:json)?|```$", "", body.strip(), flags=re.M).strip()
         result = json.loads(body)
+        result.setdefault("is_spac", True)
         result.setdefault("is_deal", True)
         result.setdefault("sector", "Unknown")
         result.setdefault("target", None)
@@ -351,7 +360,7 @@ def run(alert_on_first_run=False, dry_run=False):
     first_run = not state["seen"]
     seen = set(state["seen"])
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%MZ")
-    sent = skipped_cik = skipped_sector = skipped_notdeal = 0
+    sent = skipped_cik = skipped_sector = skipped_notdeal = skipped_notspac = 0
 
     for form_type, url in EDGAR_FEEDS.items():
         try:
@@ -382,6 +391,10 @@ def run(alert_on_first_run=False, dry_run=False):
             text = fetch_filing_text(e["link"])
             info = classify(text)
 
+            if not info["is_spac"]:
+                skipped_notspac += 1
+                print("    · ordinary M&A, not a SPAC - skipped")
+                continue
             if not info["is_deal"]:
                 skipped_notdeal += 1
                 print("    · not a deal filing - skipped")
@@ -410,7 +423,8 @@ def run(alert_on_first_run=False, dry_run=False):
         print(f"[{stamp}] First run - seeded {len(state['seen'])} filings, no alerts.")
     else:
         print(f"[{stamp}] Done. {sent} sent | {skipped_cik} in cooldown | "
-              f"{skipped_sector} off-sector | {skipped_notdeal} not deals.")
+              f"{skipped_notspac} not SPACs | {skipped_sector} off-sector | "
+              f"{skipped_notdeal} not deals.")
 
 
 def main():
