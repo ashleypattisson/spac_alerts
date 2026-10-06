@@ -1,0 +1,127 @@
+{
+ "8-A12B": [
+  {
+   "form": "8-A12B/A",
+   "company": "Sonoma Pharmaceuticals, Inc.",
+   "cik": "1367083",
+   "accession": "0001683168-26-007659",
+   "link": "https://www.sec.gov/Archives/edgar/data/1367083/000168316826007659/0001683168-26-007659-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "TRex Bio, Inc.",
+   "cik": "2139097",
+   "accession": "0001193125-26-415520",
+   "link": "https://www.sec.gov/Archives/edgar/data/2139097/000119312526415520/0001193125-26-415520-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "AMERICAN CENTURY ETF TRUST",
+   "cik": "1710607",
+   "accession": "0001710607-26-000299",
+   "link": "https://www.sec.gov/Archives/edgar/data/1710607/000171060726000299/0001710607-26-000299-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "Amplify ETF Trust",
+   "cik": "1633061",
+   "accession": "0001213900-26-107006",
+   "link": "https://www.sec.gov/Archives/edgar/data/1633061/000121390026107006/0001213900-26-107006-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "Bradbury Capital Inc.",
+   "cik": "1986694",
+   "accession": "0001493152-26-045881",
+   "link": "https://www.sec.gov/Archives/edgar/data/1986694/000149315226045881/0001493152-26-045881-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "SCHWAB CHARLES CORP",
+   "cik": "316709",
+   "accession": "0001193125-26-415008",
+   "link": "https://www.sec.gov/Archives/edgar/data/316709/000119312526415008/0001193125-26-415008-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "WisdomTree Trust",
+   "cik": "1350487",
+   "accession": "0001214659-26-012563",
+   "link": "https://www.sec.gov/Archives/edgar/data/1350487/000121465926012563/0001214659-26-012563-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "WisdomTree Trust",
+   "cik": "1350487",
+   "accession": "0001214659-26-012562",
+   "link": "https://www.sec.gov/Archives/edgar/data/1350487/000121465926012562/0001214659-26-012562-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "Nextdoor Holdings, Inc.",
+   "cik": "1846069",
+   "accession": "0001846069-26-000175",
+   "link": "https://www.sec.gov/Archives/edgar/data/1846069/000184606926000175/0001846069-26-000175-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "QWEST CORP",
+   "cik": "68622",
+   "accession": "0000947871-26-000919",
+   "link": "https://www.sec.gov/Archives/edgar/data/68622/000094787126000919/0000947871-26-000919-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "Lumen Technologies, Inc.",
+   "cik": "18926",
+   "accession": "0000947871-26-000919",
+   "link": "https://www.sec.gov/Archives/edgar/data/18926/000094787126000919/0000947871-26-000919-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "Pine Tree Acquisition Corp.",
+   "cik": "2076561",
+   "accession": "0001477932-26-006041",
+   "link": "https://www.sec.gov/Archives/edgar/data/2076561/000147793226006041/0001477932-26-006041-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "Paramount Skydance Corp",
+   "cik": "2041610",
+   "accession": "0001104659-26-113569",
+   "link": "https://www.sec.gov/Archives/edgar/data/2041610/000110465926113569/0001104659-26-113569-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "Direxion Shares ETF Trust",
+   "cik": "1424958",
+   "accession": "0001193125-26-411550",
+   "link": "https://www.sec.gov/Archives/edgar/data/1424958/000119312526411550/0001193125-26-411550-index.htm"
+  },
+  {
+   "form": "8-A12B",
+   "company": "Tidal Trust V",
+   "cik": "2081107",
+   "accession": "0001999371-26-021946",
+   "link": "https://www.sec.gov/Archives/edgar/data/2081107/000199937126021946/0001999371-26-021946-index.htm"
+  }
+ ],
+ "424B4": [
+  {
+   "form": "424B4",
+   "company": "Pine Tree Acquisition Corp.",
+   "cik": "2076561",
+   "accession": "0001477932-26-006063",
+   "link": "https://www.sec.gov/Archives/edgar/data/2076561/000147793226006063/0001477932-26-006063-index.htm"
+  }
+ ],
+ "424B1": [
+  {
+   "form": "424B1",
+   "company": "Chilwa Minerals Ltd",
+   "cik": "2113605",
+   "accession": "0001213900-26-106090",
+   "link": "https://www.sec.gov/Archives/edgar/data/2113605/000121390026106090/0001213900-26-106090-index.htm"
+  }
+ ]
+}

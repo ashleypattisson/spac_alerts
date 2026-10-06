@@ -1,0 +1,32 @@
+[2026-10-06 20:50Z] 8-A12B: 15 entries in feed
+    [debug] cik 2081107: Tidal Trust V | sic  | tickers [] | forms ['497J', '497J', '497J', '485BPOS', '8-A12B', '485BPOS', '497J', '485BPOS', '8-A12B', '485BXT', '485BPOS', '497J']
+    [debug] cik 1424958: Direxion Shares ETF Trust | sic  | tickers [] | forms ['CERT', '8-A12B', '485BXT', 'NPORT-P', 'NPORT-P', 'NPORT-P', 'NPORT-P', 'NPORT-P', 'NPORT-P', 'NPORT-P', 'NPORT-P', 'NPORT-P']
+    [debug] cik 2041610: Paramount Skydance Corp | sic 4833 | tickers ['PSKY'] | forms ['8-K', 'S-8', '25', 'CERT', '424B5', '8-A12B', 'FWP', '8-K', '8-K', '8-K', '8-K', 'FWP']
+    [debug] cik 2076561: Pine Tree Acquisition Corp. | sic 6770 | tickers ['PAXG'] | forms ['424B4', 'EFFECT', '3', '3', '3', '3', '3', 'CERT', '8-A12B', 'S-1/A', 'S-1/A', 'S-1/A']
+  → 8-A12B: Pine Tree Acquisition Corp. [blank-check company (SIC 6770)]
+    [debug] prospectus https://www.sec.gov/Archives/edgar/data/2076561/000147793226006063/ptree_424b4.htm -> 24000 chars
+    [debug] details: {"is_blank_check": true, "units_ticker": "PAXGU", "exchange": "Nasdaq", "size_usd_millions": 100, "unit_price": 10.0, "trust_per_unit": 10.0, "unit_terms": "one Class A ordinary share and one right", "focus": null, "degraded": false}
+    [dry run] New SPAC: Pine Tree Acquisition Corp. (PAXGU)
+      $100m · $10.00 in trust per unit
+      Nasdaq · Likely first trade Wed 7 Oct (est.)
+      Unit: one Class A ordinary share and one right
+    [debug] cik 18926: Lumen Technologies, Inc. | sic 4813 | tickers ['LUMN'] | forms ['CERT', '25', '8-A12B', '8-K', '4', '4', '4', '3', '10-Q', '8-K', 'CERT', '8-A12B']
+    [debug] cik 68622: QWEST CORP | sic 4813 | tickers ['CTGG', 'CTHH'] | forms ['CERT', '25', '8-A12B', '15-12G', 'CERT', '8-A12B', '8-K', '8-K', 'EFFECT', '424B3', 'POS AM', '425']
+    [debug] cik 1846069: Nextdoor Holdings, Inc. | sic 7370 | tickers ['NXDR'] | forms ['8-A12B', '4', '4', '4', '4', '4', '8-K', '8-K', '144', '4', '4', '144']
+    [debug] cik 1350487: WisdomTree Trust | sic  | tickers [] | forms ['497K', '497K', 'CERT', 'CERT', '485BPOS', '8-A12B', '8-A12B', '485BPOS', '497K', '497K', '497K', '497K']
+    [debug] cik 316709: SCHWAB CHARLES CORP | sic 6211 | tickers ['SCHW', 'SCHW-PD', 'SCHW-PJ'] | forms ['CERT', '8-A12B', '4', '4', '4', '4', '4', '4', '4', '4', '4', '4']
+    [debug] cik 1986694: Bradbury Capital Inc. | sic 7389 | tickers [] | forms ['6-K', '8-A12B', 'POS AM', 'CERT', '424B3', 'EFFECT', 'F-4/A', 'F-4/A', 'F-4/A', 'F-4/A', 'F-4/A', 'F-4/A']
+    [debug] cik 1633061: Amplify ETF Trust | sic  | tickers [] | forms ['497J', 'CERT', '8-A12B', 'N-14', '497K', '485BPOS', '485BXT', '485BXT', '485APOS', '485BXT', '485BXT', '485BXT']
+    [debug] cik 1710607: AMERICAN CENTURY ETF TRUST | sic  | tickers [] | forms ['8-A12B', '497', '497K', '497', '25', 'CERT', '497', '497', '8-A12B', '497', '497K', '497']
+    [debug] cik 2139097: TRex Bio, Inc. | sic 2836 | tickers [] | forms ['8-A12B', 'S-1/A', 'S-1', 'DRS/A', 'DRS/A', 'DRS']
+[2026-10-06 20:50Z] 424B4: 1 entries in feed
+  → 424B4: Pine Tree Acquisition Corp. [blank-check company (SIC 6770)]
+    [debug] prospectus https://www.sec.gov/Archives/edgar/data/2076561/000147793226006063/ptree_424b4.htm -> 24000 chars
+    [debug] details: {"is_blank_check": true, "units_ticker": "PAXGU", "exchange": "Nasdaq", "size_usd_millions": 100, "unit_price": 10.0, "trust_per_unit": 10.0, "unit_terms": "one Class A ordinary share and one right", "focus": null, "degraded": false}
+    [dry run] SPAC priced: Pine Tree Acquisition Corp. (PAXGU)
+      $100m · $10.00 in trust per unit
+      Nasdaq · Priced - trading now or from the next session
+      Unit: one Class A ordinary share and one right
+[2026-10-06 20:50Z] 424B1: 1 entries in feed
+    [debug] cik 2113605: Chilwa Minerals Ltd | sic 1400 | tickers ['CHWM'] | forms ['6-K', '424B1', 'CERT', '8-A12B/A', 'EFFECT', '3', 'F-1/A', 'F-1/A', 'F-1/A', '8-A12B', 'F-1/A', 'F-1/A']
+[2026-10-06 20:50Z] Done. 2 sent | 0 already alerted | 14 not new SPACs | 0 failed to send.
