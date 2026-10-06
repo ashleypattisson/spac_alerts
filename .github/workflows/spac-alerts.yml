@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/10 * * * *"   # every 10 minutes
   workflow_dispatch:          # lets you run it manually from the Actions tab
+    inputs:
+      replay:
+        description: "Re-check the last few days and alert on any new SPACs"
+        type: boolean
+        default: false
 
 permissions:
   contents: write             # needed to commit seen_filings.json back
@@ -29,7 +34,7 @@ jobs:
           PUSHOVER_USER: ${{ secrets.PUSHOVER_USER }}
           SEC_EMAIL: ${{ secrets.SEC_EMAIL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python spac_alerts.py --once
+        run: python spac_alerts.py --once ${{ inputs.replay && '--replay' || '' }}
 
       - name: Save state back to repo
         run: |
