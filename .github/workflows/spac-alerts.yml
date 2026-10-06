@@ -1,108 +1,28 @@
 name: SPAC Alerts
-
-# How this runs
-# -------------
-# GitHub's own timer is unreliable (it was firing every 5-8 hours instead of
-# every 10 minutes). So instead of relying on it, one run now stays alive for
-# about 5 hours, checking the SEC every 5 minutes, and then starts the next
-# run itself. The hourly timer below is only a safety net: it restarts the
-# checker if it has stopped, and does nothing if one is already running.
-
 on:
-  schedule:
-    - cron: "17 * * * *"      # hourly safety net
-  workflow_dispatch:          # lets you run it manually from the Actions tab
+  workflow_dispatch:
     inputs:
       replay:
-        description: "Re-check the last few days and alert on any new SPACs"
         type: boolean
         default: false
-
 permissions:
-  contents: write             # needed to commit seen_filings.json back
-  actions: write              # needed to start the next run
-
+  contents: write
 jobs:
-  guard:
+  probe:
     runs-on: ubuntu-latest
-    outputs:
-      go: ${{ steps.check.outputs.go }}
     steps:
-      - name: Is a checker already running?
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          go=true
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            others=$(gh api "repos/${{ github.repository }}/actions/workflows/spac-alerts.yml/runs?per_page=30" \
-              --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }}) | select(.status != "completed")] | length' || echo 0)
-            if [ "${others:-0}" -gt 0 ]; then
-              echo "A checker is already running - nothing to do."
-              go=false
-            fi
-          fi
-          echo "go=$go" >> "$GITHUB_OUTPUT"
-
-  poll:
-    needs: guard
-    if: needs.guard.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 345
-    concurrency:              # never two checkers at once
-      group: spac-alerts-${{ inputs.replay && 'replay' || 'loop' }}
-      cancel-in-progress: false
-    steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install dependencies
-        run: pip install requests
-
-      - name: Run SPAC monitor
-        env:
-          PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
-          PUSHOVER_USER: ${{ secrets.PUSHOVER_USER }}
+      - run: pip install requests
+      - env:
           SEC_EMAIL: ${{ secrets.SEC_EMAIL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GH_TOKEN: ${{ github.token }}
-          REPLAY: ${{ inputs.replay && '1' || '' }}
-          CHECK_EVERY_SECONDS: "300"     # 5 minutes
-          RUN_FOR_SECONDS: "18000"       # 5 hours, then hand over to a fresh run
         run: |
+          python debug_probe.py
           git config user.name "spac-bot"
           git config user.email "spac-bot@users.noreply.github.com"
-
-          save() {
-            git add seen_filings.json
-            git diff --staged --quiet && return 0
-            git commit -q -m "Update seen filings"
-            git push -q origin HEAD:main || {
-              echo "could not save state - resyncing"
-              git fetch -q origin main && git reset -q --hard origin/main
-            }
-          }
-
-          # Manual "replay" run: one pass, then stop.
-          if [ -n "$REPLAY" ]; then
-            python spac_alerts.py --once --replay
-            save
-            exit 0
-          fi
-
-          end=$(( $(date +%s) + RUN_FOR_SECONDS ))
-          while [ "$(date +%s)" -lt "$end" ]; do
-            # Pick up the latest script and state before every check.
-            git fetch -q origin main && git reset -q --hard origin/main
-            python spac_alerts.py --once || echo "check failed - will try again"
-            save
-            sleep "$CHECK_EVERY_SECONDS"
-          done
-
-          # Hand over to a fresh run.
-          gh workflow run spac-alerts.yml --ref main
+          git add debug_out
+          git commit -q -m "probe output"
+          git push -q origin HEAD:debug-probe
