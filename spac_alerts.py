@@ -71,7 +71,7 @@ MAX_SEEN = 5000
 REMEMBER_DAYS = 400          # how long we remember a SPAC we've alerted on
 
 DOC_BYTES = 900_000          # read at most this much of a prospectus
-DOC_CHARS = 24_000           # ...and send this much text to the classifier
+DOC_CHARS = 40_000           # ...and send this much text to the classifier
 
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 
@@ -309,7 +309,7 @@ Respond with ONLY a JSON object, no markdown, no preamble:
 "size_usd_millions": number or null, "unit_price": number or null, \
 "trust_per_unit": number or null, \
 "unit_terms": "what one unit contains, max 10 words, or null", \
-"focus": "target industry or region the SPAC says it will pursue, max 8 words, or null"}}
+"industry": "see rules, max 6 words"}}
 
 Rules:
 - is_blank_check: true ONLY if this is a special purpose acquisition company / \
@@ -319,6 +319,12 @@ trust account. An ordinary operating company's IPO is false.
 - size_usd_millions: base offering size, excluding the over-allotment option.
 - trust_per_unit: dollars per unit placed in the trust account \
 (e.g. 10.00, 10.05, 10.10). Use null if not stated - do not guess.
+- industry: the industry or sector the SPAC says it intends to target for its \
+merger (e.g. "Fintech", "AI infrastructure", "Energy transition", "Healthcare"). \
+If it says it may pursue any industry but ALSO names a sector it intends to focus \
+on or that its management team specialises in, give that sector followed by \
+" (not limited)". If it names no sector at all, answer exactly "Any industry". \
+If the text does not cover this, use null.
 - Use null for anything the text does not state.
 
 PROSPECTUS TEXT:
@@ -332,7 +338,7 @@ def extract_details(text):
     """Ask Claude for ticker / size / trust. Never raises; fails open."""
     blank = {"is_blank_check": None, "units_ticker": None, "exchange": None,
              "size_usd_millions": None, "unit_price": None,
-             "trust_per_unit": None, "unit_terms": None, "focus": None,
+             "trust_per_unit": None, "unit_terms": None, "industry": None,
              "degraded": True}
     if text:
         m = TICKER_RE.search(text)
@@ -411,9 +417,9 @@ def build_alert(name, form, info, company, now=None):
     priced = form.startswith("424B")
     title = ("SPAC priced: " if priced else "New SPAC: ") + name
     if ticker:
-        title += f" ({ticker})"
+        title = f"{ticker} - {title}"   # ticker first so it shows in the banner
 
-    lines = []
+    lines = [f"Industry: {info.get('industry') or 'not stated - check prospectus'}"]
     money = []
     size = _num(info.get("size_usd_millions"))
     if size:
@@ -437,8 +443,6 @@ def build_alert(name, form, info, company, now=None):
 
     if info.get("unit_terms"):
         lines.append(f"Unit: {info['unit_terms']}")
-    if info.get("focus"):
-        lines.append(f"Focus: {info['focus']}")
     return title, "\n".join(lines)
 
 
